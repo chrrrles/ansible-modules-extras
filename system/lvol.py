@@ -169,23 +169,19 @@ def main():
             size_unit = ''
 
         # LVCREATE(8) -L --size option unit
-        elif size[-1].isalpha():
-            if size[-1].lower() in 'bskmgtpe':
-                size_unit = size[-1].lower()
-                if '.' in size[0:-1]:
-                    size = float(size[0:-1])
-                elif size[0:-1].isdigit():
-                    size = int(size[0:-1])
-                else:
-                    module.fail_json(msg="Bad size specification for unit %s" % size_unit)
-                size_opt = 'L'
-            else:
-                module.fail_json(msg="Size unit should be one of [bBsSkKmMgGtTpPeE]")
+        elif size[-1].lower() in 'bskmgtpe':
+            size_unit = size[-1].lower()
+            size = size[0:-1]
+            try:
+                float(size) 
+            except ValueError:
+                module_fail(msg="Bad value for size in %s%s" % (size,size_unit))
         # when no unit, megabytes by default
-        elif size.isdigit():
-            size = int(size)
         else:
-            module.fail_json(msg="Bad size specification")
+            try:
+                float(size)
+            except ValueError:
+                module.fail_json(msg="Bad size specification")
 
     if size_opt == 'l':
         unit = 'm'
