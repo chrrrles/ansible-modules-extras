@@ -95,6 +95,7 @@ decimal_point = re.compile(r"(\.|,)")
 def mkversion(major, minor, patch):
     return (1000 * 1000 * int(major)) + (1000 * int(minor)) + int(patch)
 
+
 def parse_lvs(data):
     lvs = []
     for line in data.splitlines():
@@ -122,7 +123,7 @@ def main():
         argument_spec=dict(
             vg=dict(required=True),
             lv=dict(required=True),
-            size=dict(),
+            size=dict(type='str'),
             opts=dict(type='str'),
             state=dict(choices=["absent", "present"], default='present'),
             force=dict(type='bool', default='no'),
@@ -171,7 +172,9 @@ def main():
         elif size[-1].isalpha():
             if size[-1].lower() in 'bskmgtpe':
                 size_unit = size[-1].lower()
-                if size[0:-1].isdigit():
+                if '.' in size[0:-1]:
+                    size = float(size[0:-1])
+                elif size[0:-1].isdigit():
                     size = int(size[0:-1])
                 else:
                     module.fail_json(msg="Bad size specification for unit %s" % size_unit)
