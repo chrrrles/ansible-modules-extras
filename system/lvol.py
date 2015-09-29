@@ -170,13 +170,14 @@ def main():
             size_unit = ''
 
         # LVCREATE(8) -L --size option unit
-        if size[-1].lower() in 'bskmgtpe':
+        elif size[-1].lower() in 'bskmgtpe':
             size_unit = size[-1].lower()
             size = size[0:-1]
 
         try:
-            float(size)
-            if not size[0].isdigit(): raise ValueError()
+            if not '%' in size:
+              float(size)
+              if not size[0].isdigit(): raise ValueError()
         except ValueError:
             module.fail_json(msg="Bad size specification of '%s'" % size)
 
