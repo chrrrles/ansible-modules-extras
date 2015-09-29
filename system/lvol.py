@@ -21,8 +21,8 @@
 DOCUMENTATION = '''
 ---
 author:
-    - "Jeroen Hoekx (@jhoekx)" 
-    - "Alexander Bulimov (@abulimov)" 
+    - "Jeroen Hoekx (@jhoekx)"
+    - "Alexander Bulimov (@abulimov)"
 module: lvol
 short_description: Configure LVM logical volumes
 description:
@@ -42,7 +42,8 @@ options:
     - The size of the logical volume, according to lvcreate(8) --size, by
       default in megabytes or optionally with one of [bBsSkKmMgGtTpPeE] units; or
       according to lvcreate(8) --extents as a percentage of [VG|PVS|FREE];
-      resizing is not supported with percentages.
+      resizing is not supported with percentages. Float values must begin
+      with a digit.
   state:
     choices: [ "present", "absent" ]
     default: present
@@ -169,20 +170,17 @@ def main():
             size_unit = ''
 
         # LVCREATE(8) -L --size option unit
-        elif size[-1].lower() in 'bskmgtpe':
+        if size[-1].lower() in 'bskmgtpe':
             size_unit = size[-1].lower()
             size = size[0:-1]
-            try:
-                float(size) 
-            except ValueError:
-                module_fail(msg="Bad value for size in %s%s" % (size,size_unit))
-        # when no unit, megabytes by default
-        else:
-            try:
-                float(size)
-            except ValueError:
-                module.fail_json(msg="Bad size specification")
 
+        try:
+            float(size)
+            if not size[0].isdigit(): raise ValueError()
+        except ValueError:
+            module.fail_json(msg="Bad size specification of '%s'" % size)
+
+    # when no unit, megabytes by default
     if size_opt == 'l':
         unit = 'm'
     else:
