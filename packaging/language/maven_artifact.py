@@ -99,11 +99,11 @@ options:
 '''
 
 EXAMPLES = '''
-# Download the latest version of the commons-collections artifact from Maven Central
-- maven_artifact: group_id=org.apache.commons artifact_id=commons-collections dest=/tmp/commons-collections-latest.jar
+# Download the latest version of the JUnit framework artifact from Maven Central
+- maven_artifact: group_id=junit artifact_id=junit dest=/tmp/junit-latest.jar
 
-# Download Apache Commons-Collections 3.2 from Maven Central
-- maven_artifact: group_id=org.apache.commons artifact_id=commons-collections version=3.2 dest=/tmp/commons-collections-3.2.jar
+# Download JUnit 4.11 from Maven Central
+- maven_artifact: group_id=junit artifact_id=junit version=4.11 dest=/tmp/junit-4.11.jar
 
 # Download an artifact from a private repository requiring authentication
 - maven_artifact: group_id=com.company artifact_id=library-name repository_url=https://repo.company.com/maven username=user password=pass dest=/tmp/library-name-latest.jar
@@ -296,7 +296,7 @@ def main():
             artifact_id = dict(default=None),
             version = dict(default=None),
             classifier = dict(default=None),
-            extension = dict(default=None, required=True),
+            extension = dict(default='jar'),
             repository_url = dict(default=None),
             username = dict(default=None),
             password = dict(default=None),
