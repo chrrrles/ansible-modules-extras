@@ -7,18 +7,25 @@ try:
 except ImportError:
   HAS_PYVMOMI = False
 
+def get_obj(content, vimtype, name=None): # [XXX] should place in module_utils
+  for obj in get_all_objs(content, vimtype):
+    if not name:
+      return obj
+    if obj.name == name:
+      return obj
+
 
 def create_template(module):
   content = connect_to_api(module)
-  vm = find_obj(content, [vim.VirtualMachine], module.params['vm_name']) 
+  vm = get_obj(content, [vim.VirtualMachine], module.params['vm_name'])
   if not vm:
     module.fail_json(msg="Attempting operation on non-existent VM")
   relospec = vim.vm.RelocateSpec()
   clonespec = vim.vm.CloneSpec()
   clonespec.location = relospec
 
-  template_name = module_params['template_name']
-  
+  template_name = module.params['template_name']
+
   if template_name:
     task = vm.CloneVM_Task(vm.parent,template_name, clonespec)
     changed, result = wait_for_task(task)
@@ -35,10 +42,10 @@ def main():
     vm_name = dict(type='str', required=True),
     template_name = dict(type='str', default=None),
     ))
-  module = AnsibleModule(argument_spec=argument_spec) 
+  module = AnsibleModule(argument_spec=argument_spec)
   if not HAS_PYVMOMI:
     module.fail_json(msg='pyvmomi is required for this module')
-  try:  
+  try:
     create_template(module)
   except Exception as e:
     module.fail_json(msg=str(e))
