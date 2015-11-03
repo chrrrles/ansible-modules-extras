@@ -16,36 +16,68 @@ def get_obj(content, vimtype, name=None):
 
 def create_vm(module):
   content = module.params['content']
-  vm_dc = module.params['vm_dc'])
+  vm_dc = module.params['vm_dc']
   vm_name = module.params['vm_name']
   vm_folder = module.params['vm_folder']
-  ds_path = "[%s] %s" % (modul.params['vm_ds'], vm_name)
-  cluster = get_obj(content, [vim.ClusterComputeResource], module.params['vm_cluster']) 
+  ds_path = "[%s] %s" % (module.params['vm_ds'], vm_name)
+  cluster = module.params['vm_cluster'] 
   vm_pool = module.params['vm_pool']
-  files = vim.vm.FileInfo(logDirectory=None 
+
+  # [XXX] Only one network for now
+  vm_network = module.params['vm_network']
+  vm_nic_type = module.params['vm_nic_type']
+  if vm_nic_type == 'vmxnet':
+    nic_device = vim.vm.device.VirtualVmxnet
+  elif vm_nic_type == 'e1000e':
+    nic_device = vim.vm.device.VirtualE1000e
+  elif vm_nic_type == 'e1000':
+    nic_device = vim.vm.device.VirtualE1000
+  elif vm_nic_type == 'vmxnet2':
+    nic_device = vim.vm.device.VirtualVmxnet2
+  else: # we assume vmxnet3 for better compatibility
+    nic_device = vim.vm.device.VirtualVmxnet3
+  nic_spec = vim.vm.device.VirtualDeviceSpec(
+    operation = vim.vm.device.VirtualDeviceSpec.Operation.add,
+    device = nic_device(
+      backing = vim.vm.device.VirtualEthernetCard.NetworkBackingInfo(
+        network=get_obj(content, [vim.Network], vm_network),
+        deviceName=vm_network),
+      connectable = vim.vm.device.VirtualDevice.ConnectInfo(
+        startConnected=True,
+        allowGuestControl=True)
+    )
+  )
+
+  files = vim.vm.FileInfo(logDirectory=None,
                           snapshotDirectory=None,
                           suspendDirectory=None,
                           vmPathName=ds_path)
   config = vim.vm.ConfigSpec(
-    name = module.params['vm_name'], 
+    name = vm_name,
     memoryMB = module.params['vm_memoryMB'],
     numCPUs = module.params['vm_numCPUs'],
-    files = files)
-     
-  task = folder.CreateVM_Task(config=config, pool=pool) 
+    files = files,
+    guestId = module.params['vm_guest_id'],
+    deviceChange=[nic_spec])
+
+  task = vm_folder.CreateVM_Task(config=config, pool=vm_pool) 
   changed, result = wait_for_task(task)
+  if module.params['vm_power']:
+    vm = get_obj(content, [vim.VirtualMachine], vm_name)
+    task = vm.PowerOn()
+    changed, result = wait_for_task(task)
   module.exit_json(changed=changed, result=str(result))
 
 def clone_vm(module):
   content = module.params['content']
-  template = find_obj(content, [vim.VirtualMachine], module.params['vm_template'])
+  template = get_obj(content, [vim.VirtualMachine], module.params['vm_template'])
   vm_dc = module.params['vm_dc']
   vm_pool = module.params['vm_pool']
   vm_cluster = module.params['vm_cluster']
   if module.params['vm_ds']:
-    vm_ds = find_obj(content, [vim.Datastore], module.params['vm_ds'])
+    vm_ds = get_obj(content, [vim.Datastore], module.params['vm_ds'])
   else:
-    vm_ds = find_obj(content, [vim.Datastore], template.datastore[0].info.name)
+    vm_ds = get_obj(content, [vim.Datastore], template.datastore[0].info.name)
   vm_folder = module.params['vm_folder']
   vm_name = module.params['vm_name']
   vm_spec = module.params['vm_spec']
@@ -66,7 +98,7 @@ def clone_vm(module):
 def check_vm_state(module):
   content = connect_to_api(module)
   module.params['content'] = content
-  vm = find_obj(content, [vim.VirtualMachine], module.params['vm_name'])
+  vm = get_obj(content, [vim.VirtualMachine], module.params['vm_name'])
   if vm is None:
     return 'absent'
   module.params['vm'] = vm
@@ -74,30 +106,29 @@ def check_vm_state(module):
 
 def state_destroy(module):
   vm = module.params['vm']
-  # only destroy if 'force' is True
-  if force:
-    # first power down the VM
-    if module.check_mode:
-      module.exit_json(True, None)
-    if format(vm.runtime.powerState) == "poweredOn":  
-      task = vm.powerOffVM_Task()
-      changed, result = wait_for_task (task)
-    task = vm.destroy_task()
-    changed, result =  wait_for_task(task)
-    module.exit_json(changed=changed, result=str(result))
+  # first power down the VM
+  if module.check_mode:
+    module.exit_json(True, None)
+  if format(vm.runtime.powerState) == "poweredOn":  
+    task = vm.PowerOffVM_Task()
+    changed, result = wait_for_task (task)
+  task = vm.Destroy_Task()
+  changed, result =  wait_for_task(task)
+  module.exit_json(changed=changed, result=str(result))
 
 def state_create(module):
   if module.check_mode: # exit here!
     module.exit_json(True, None)
   content = module.params['content']
-  module.params['vm_dc'] = find_obj(content, [vim.Datacenter], module.params['vm_dc'])
-  module.params['vm_cluster'] = find_obj(content, [vim.ClusterComputeResource], module.params['vm_cluster'])
+  vm_cluster = module.params['vm_cluster']
+  module.params['vm_dc'] = get_obj(content, [vim.Datacenter], module.params['vm_dc'])
+  module.params['vm_cluster'] = get_obj(content, [vim.ClusterComputeResource], vm_cluster)
   if module.params['vm_pool']:
-    module.params['vm_pool'] = find_obj(content, [vim.ResourcePool], module.params['vm_pool'])
+    module.params['vm_pool'] = get_obj(content, [vim.ResourcePool], module.params['vm_pool'])
   else: # if not specified, use the cluster's resource pool
     module.params['vm_pool'] = module.params['vm_cluster'].resourcePool
   if module.params['vm_folder']:
-    module.params['vm_folder'] = find_obj(content, [vim.Folder], module.params['vm_folder'])
+    module.params['vm_folder'] = get_obj(content, [vim.Folder], module.params['vm_folder'])
   else:
     module.params['vm_folder'] = module.params['vm_dc'].vmFolder
 
@@ -140,8 +171,11 @@ def main():
     vm_template = dict(default=None, type='str'),
     vm_name = dict(required=True, type='str'), 
     vm_power = dict(default=True, type='bool'),
-    vm_memoryMB = dict(default=None, type='dict')
-    vm_numCPUs = dict(default=None, type='dict')
+    vm_memoryMB = dict(default=None, type='int'),
+    vm_numCPUs = dict(default=None, type='int'),
+    vm_guest_id = dict(default='otherLinuxGuest', type='str'),
+    vm_nic_type = dict(default='vmxnet3', type='str'),
+    vm_network = dict(default="VM Network", type='str')
     ))
   
   module = AnsibleModule(argument_spec=argument_spec)
@@ -163,9 +197,9 @@ def main():
       'present': state_maintenance,
       'maintenance': state_exit,
       'stopped': state_maintenance,
-      'absent': state_absent }
+      'absent': state_absent },
     'stopped': {
-      'present': state_stoppped,
+      'present': state_stopped,
       'maintenance': state_stopped,
       'stopped': state_exit,
       'absent': state_absent },
