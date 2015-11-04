@@ -94,14 +94,14 @@ EXAMPLES = '''
       local_action: >
         vmware_vm
         hostname=10.1.1.2
-        username=root 
+        username=root
         password=vmware
         vm_name=test-vm
 - name: Create VM
       local_action: >
         vmware_vm
         hostname=10.1.1.2
-        username=root 
+        username=root
         password=vmware
         vm_name=test-vm
         vm_datacenter=Datacenter1
@@ -123,7 +123,7 @@ def get_obj(content, vimtype, name=None):
   for obj in get_all_objs(content, vimtype):
     if not name:
       return obj
-    if obj.name == name:  
+    if obj.name == name:
       return obj
 
 def create_vm(module):
@@ -132,7 +132,7 @@ def create_vm(module):
   vm_name = module.params['vm_name']
   vm_folder = module.params['vm_folder']
   ds_path = "[%s] %s" % (module.params['vm_datastore'], vm_name)
-  cluster = module.params['vm_cluster'] 
+  cluster = module.params['vm_cluster']
   vm_pool = module.params['vm_pool']
 
   # [XXX] Only one network for now
@@ -172,7 +172,7 @@ def create_vm(module):
     guestId = module.params['vm_guest_id'],
     deviceChange=[nic_spec])
 
-  task = vm_folder.CreateVM_Task(config=config, pool=vm_pool) 
+  task = vm_folder.CreateVM_Task(config=config, pool=vm_pool)
   changed, result = wait_for_task(task)
   if module.params['vm_power']:
     vm = get_obj(content, [vim.VirtualMachine], vm_name)
@@ -195,13 +195,13 @@ def clone_vm(module):
   vm_spec = module.params['vm_spec']
 
   # set our relospec
-  relospec = vim.vm.RelocateSpec()
-  relospec.datastore = vm_datastore
-  relospec.pool = vm_pool
+  relospec = vim.vm.RelocateSpec(
+    datastore = vm_datastore,
+    pool = vm_pool)
 
-  clonespec = vim.vm.CloneSpec()
-  clonespec.location = relospec
-  clonespec.powerOn = module.params['vm_power'] 
+  clonespec = vim.vm.CloneSpec(
+    location = relospec,
+    powerOn = module.params['vm_power'])
 
   task = template.Clone(folder=vm_folder, name=vm_name, spec=clonespec)
   changed, result = wait_for_task(task)
@@ -221,7 +221,7 @@ def state_destroy(module):
   # first power down the VM
   if module.check_mode:
     module.exit_json(True, None)
-  if format(vm.runtime.powerState) == "poweredOn":  
+  if format(vm.runtime.powerState) == "poweredOn":
     task = vm.PowerOffVM_Task()
     changed, result = wait_for_task (task)
   task = vm.Destroy_Task()
@@ -247,7 +247,7 @@ def state_create(module):
   if module.params['vm_template']:
     return clone_vm(module)
   else:
-    return create_vm(module) 
+    return create_vm(module)
 
 def state_stopped(module):
   if module.check_mode:
@@ -275,7 +275,7 @@ def main():
   argument_spec.update(dict(
     # [XXX] should be this: state = dict(default='present', choices=['present', 'absent', 'stopped', 'maintenance'], type='str'),
     state = dict(default='present', choices=['present', 'absent'], type='str'),
-    vm_name = dict(required=True, type='str'), 
+    vm_name = dict(required=True, type='str'),
     vm_datacenter = dict(default=None, type='str'),
     vm_pool = dict(default=None, type='str'),
     vm_cluster = dict(default=None, type='str'),
@@ -289,7 +289,7 @@ def main():
     vm_nic_type = dict(default='vmxnet3', choices=['vmxnet', 'vmxnet3', 'e1000', 'e1000e'], type='str'),
     vm_network = dict(default="VM Network", type='str')
     ))
-  
+
   module = AnsibleModule(argument_spec=argument_spec)
   if not HAS_PYVMOMI:
     module.fail_json(msg='pyvmomi is required for this module')
