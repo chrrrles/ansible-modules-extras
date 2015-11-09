@@ -126,44 +126,103 @@ def get_obj(content, vimtype, name=None):
     if obj.name == name:
       return obj
 
+def update_vm(module):
+  pass
+
+def create_networking_specs(module):
+  vm_nics = module_params['vm_nics']
+  domain = module.params['domain']
+  nic_specs = []
+  adapter_maps = []
+
+  for nic in vm_nics:
+    network = nic['network']
+    nic_type = nic['nic_type']
+    if nic.has_key('network_type'):
+      network_type = nic.network_type
+    else:
+      network_type = 'dvs' # defaulting to DVS as default
+    if nic.has_key('')
+    if nic_type == 'vmxnet':
+      nic_device = vim.vm.device.VirtualVmxnet
+    elif nic_type == 'e1000e':
+      nic_device = vim.vm.device.VirtualE1000e
+    elif nic_type == 'e1000':
+      nic_device = vim.vm.device.VirtualE1000
+    elif nic_type == 'vmxnet2':
+      nic_device = vim.vm.device.VirtualVmxnet2
+    else: # we assume vmxnet3 for better compatibility
+      nic_device = vim.vm.device.VirtualVmxnet3
+
+    nic_spec = vim.vm.device.VirtualDeviceSpec(
+      operation = vim.vm.device.VirtualDeviceSpec.Operation.add)
+
+    if network_type = 'standard':
+      nic_spec.device = nic_device(
+        backing = vim.vm.device.VirtualEthernetCard.NetworkBackingInfo(
+          network=get_obj(content, [vim.Network], network),
+          deviceName=network),
+        connectable = vim.vm.device.VirtualDevice.ConnectInfo(
+          startConnected=True,
+          connected=True,
+          allowGuestControl=True))
+    else:
+      dvs_pg = get_obj(content, [vim.dvs.DistributedVirtualPortgroup], network)
+      dvs_port = vim.dvs.PortConnection(
+        portgroupKey = dvs_pg.key,
+        switchUuid = dvs_pg.config..distributedVirtualSwitch.uuid)
+      nic_spec.device = nic_device(
+        backing = vim.vm.device.VirtualEthernetCard.DistributedVirtualPortBackingInfo(
+          port=dvs_port))
+
+    nic_specs.append(nic_spec)
+
+    # Adapter mapping
+    adapter = vim.vm.customization.IPSettings()
+    # ipv4
+    if nic.has_key('use_dhcp') and nic['use_dhcp']:
+      adapter.ip = vim.vm.customization.DhcpIpGenerator()
+    else: # fixed ip
+      adapter.ip = vim.vm.customization.FixedIp()
+      adapter.ip.ipAddress = nic['ip']
+      adapter.subnetMask = nic['subnet_mask']
+      if nic.has_key['gateway']:
+        adapter.gateway = nic['gateway']
+    # ipv6
+    if nic.has_key('ipv6'):
+      adapter.ipV6Spec = vim.vm.customization.IPSettings.IpV6AddressSpec()
+      if nic.has_key('ipv6_use_dhcp') and nic['ipv6_use_dhcp']:
+        adapter.ipV6Spec.ip = [vim.vm.customization.DhcpIpV6Generator()]
+      else:
+        adapter.ipv6Spec.ip = [vim.vm.customization.FixedIpV6(
+          ipAddress = nic['ipv6_ip'],
+          subnetMask = nic['ipv6_subnet_mask'])]
+        if nic.has_key('ipv6_gateway'):
+          adapter.ipV6Spec.gateway = nic['ipv6_gateway']
+
+    adapter_map = vim.vm.customization.AdapterMapping(adapter = adapter)
+    adapter_maps.append(adapter_map)
+  return nic_specs, adapter_maps
+
 def create_vm(module):
   content = module.params['content']
-  vm_datacenter = module.params['vm_datacenter']
   vm_name = module.params['vm_name']
   vm_folder = module.params['vm_folder']
   ds_path = "[%s] %s" % (module.params['vm_datastore'], vm_name)
-  cluster = module.params['vm_cluster']
   vm_pool = module.params['vm_pool']
 
-  # [XXX] Only one network for now
-  vm_network = module.params['vm_network']
-  vm_nic_type = module.params['vm_nic_type']
-  if vm_nic_type == 'vmxnet':
-    nic_device = vim.vm.device.VirtualVmxnet
-  elif vm_nic_type == 'e1000e':
-    nic_device = vim.vm.device.VirtualE1000e
-  elif vm_nic_type == 'e1000':
-    nic_device = vim.vm.device.VirtualE1000
-  elif vm_nic_type == 'vmxnet2':
-    nic_device = vim.vm.device.VirtualVmxnet2
-  else: # we assume vmxnet3 for better compatibility
-    nic_device = vim.vm.device.VirtualVmxnet3
-  nic_spec = vim.vm.device.VirtualDeviceSpec(
-    operation = vim.vm.device.VirtualDeviceSpec.Operation.add,
-    device = nic_device(
-      backing = vim.vm.device.VirtualEthernetCard.NetworkBackingInfo(
-        network=get_obj(content, [vim.Network], vm_network),
-        deviceName=vm_network),
-      connectable = vim.vm.device.VirtualDevice.ConnectInfo(
-        startConnected=True,
-        allowGuestControl=True)
-    )
-  )
+  nic_specs, adapter_maps = create_networking_specs(module)
 
-  files = vim.vm.FileInfo(logDirectory=None,
-                          snapshotDirectory=None,
-                          suspendDirectory=None,
-                          vmPathName=ds_path)
+  globalip = vim.vm.customization.GlobalIPSettings(
+    dnsServerList = module.params['dns_server_list'],
+    dnsSuffixList = module.params['dns_suffix_list'] )
+
+  files = vim.vm.FileInfo(
+    logDirectory=None,
+    snapshotDirectory=None,
+    suspendDirectory=None,
+    vmPathName=ds_path)
+
   config = vim.vm.ConfigSpec(
     name = vm_name,
     memoryMB = module.params['vm_memoryMB'],
@@ -174,10 +233,12 @@ def create_vm(module):
 
   task = vm_folder.CreateVM_Task(config=config, pool=vm_pool)
   changed, result = wait_for_task(task)
+
   if module.params['vm_power']:
     vm = get_obj(content, [vim.VirtualMachine], vm_name)
     task = vm.PowerOn()
     changed, result = wait_for_task(task)
+
   module.exit_json(changed=changed, result=str(result))
 
 def clone_vm(module):
@@ -194,6 +255,43 @@ def clone_vm(module):
   vm_name = module.params['vm_name']
   vm_spec = module.params['vm_spec']
 
+  nic_specs, adapter_maps = create_networking_specs(module)
+
+  # thanks: @scaryghosts https://github.com/scaryghosts/vmdeploy/blob/master/clone_vm.py
+  os_identity = module.params['os_identity']
+  if os_identity == 'windows':
+    identity = pyVmomi.vim.CustomizationSysprep()
+    cust_pass = pyVmomi.vim.CustomizationPassword(
+      cust_pass.plainText = True,
+      cust_pass.value = module.params['admin_pass'])
+    identity.guiUnattended = pyVmomi.vim.CustomizationGuiUnattended(
+      autoLogon = True,
+      autoLogonCount = 1,
+      timeZone = module.params['windows_timezone'],
+      password = cust_pass)
+    domain_pass =  pyVmomi.vim.CustomizationPassword(
+      plainText = True,
+      value = module.params['windows_domain_password'])
+    identity.identification = pyVmomi.vim.CustomizationIdentification(
+      domainAdmin = module.params['windows_domain_account'],
+      joinDomain = module.params['windows_ad_domain'],
+      domainAdminPassword = domain_pass )
+    computerName =  pyVmomi.vim.vm.customization.FixedName(
+      name = vm_name)
+    userdata = pyVmomi.vim.CustomizationUserData(
+      fullName = module.params['windows_fullname'],
+      orgName = module.params['windows_orgname'],
+      computerName = computerName)
+    identity.userData = userdata
+
+  elif os_identity == 'linux':
+    hostName = pyVmomi.vim.vm.customization.FixedName(
+      name = vm_name)
+    identity = pyVmomi.vim.vm.customization.LinuxPrep(
+      domain = domain,
+      timeZone = module.params['linux_timezone'],
+      hwClockUTC = False)
+
   # set our relospec
   relospec = vim.vm.RelocateSpec(
     datastore = vm_datastore,
@@ -207,6 +305,28 @@ def clone_vm(module):
   changed, result = wait_for_task(task)
   module.exit_json(changed=changed, result=str(result))
 
+#[XXX] not implemented
+def check_vm_update_state(module):
+  content = module.params['content']
+  vm = module.params['vm']
+  vm_nics = module_params['vm_nics']
+  #vm_storage = modules_params['vm_storage']
+  memoryMB = module.params['vm_memoryMB'],
+  numCPUs = module.params['vm_numCPUs'],
+
+  # [TODO] vm_storage = module_params['vm_storage']
+  for device in vm.config.hardware.device:
+    if isinstance(device, vim.vm.device.VirtualEthernetCard):
+      backing = device.backing
+      if backing.has_key('port'):
+        pgkey = backing.port.portgroupKey
+        switch_uuid = backing.port.switchUuid
+        dvs = content.dvSwitchManager.queryDvsByUuid(switch_uuid)
+        pg = dvs.LookupDvPortGroup(pg_key)
+        network_name = pg.config.name
+      else:
+        network_name = backing.network.name
+
 def check_vm_state(module):
   content = connect_to_api(module)
   module.params['content'] = content
@@ -214,6 +334,9 @@ def check_vm_state(module):
   if vm is None:
     return 'absent'
   module.params['vm'] = vm
+  # [TODO] we have a vm already, but might be clone operation
+  #if module.params['vm_template']:
+  #  return check_vm_update_state(module)
   return 'present'
 
 def state_destroy(module):
@@ -286,8 +409,9 @@ def main():
     vm_memoryMB = dict(default=None, type='int'),
     vm_numCPUs = dict(default=None, type='int'),
     vm_guest_id = dict(default='otherLinuxGuest', type='str'),
-    vm_nic_type = dict(default='vmxnet3', choices=['vmxnet', 'vmxnet3', 'e1000', 'e1000e'], type='str'),
-    vm_network = dict(default="VM Network", type='str')
+    vm_nics = dict(default=None, type='dict')
+    #vm_nic_type = dict(default='vmxnet3', choices=['vmxnet', 'vmxnet3', 'e1000', 'e1000e'], type='str'),
+    #vm_network = dict(default="VM Network", type='str')
     ))
 
   module = AnsibleModule(argument_spec=argument_spec)
