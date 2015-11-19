@@ -74,14 +74,9 @@ options:
         description:
             - The guestId string to use for the VM
         default: "otherLinuxGuest"
-    vm_nic_type:
+    vm_nics:
         description:
-            - The network card type to use for the VM
-        choices: ['vmxnet', 'vmxnet3', 'e1000', 'e1000e']
-    vm_network
-        description:
-            - The name of the network to use for the VM
-        default: "VM Network"
+            - A dictionary describing the network interfaces for the VM
     state:
         description:
             - If the datacenter should be present or absent
@@ -129,54 +124,48 @@ def get_obj(content, vimtype, name=None):
 def update_vm(module):
   pass
 
-def create_networking_specs(module):
-  vm_nics = module_params['vm_nics']
-  domain = module.params['domain']
-  nic_specs = []
-  adapter_maps = []
+def create_identity(module):
+  # thanks: @scaryghosts https://github.com/scaryghosts/vmdeploy/blob/master/clone_vm.py
+  os_identity = module.params['os_identity']
+  if os_identity == 'windows':
+    identity = pyVmomi.vim.CustomizationSysprep()
+    cust_pass = pyVmomi.vim.CustomizationPassword(
+      plainText = True,
+      value = module.params['admin_pass'])
+    identity.guiUnattended = pyVmomi.vim.CustomizationGuiUnattended(
+      autoLogon = True,
+      autoLogonCount = 1,
+      timeZone = module.params['windows_timezone'],
+      password = cust_pass)
+    domain_pass =  pyVmomi.vim.CustomizationPassword(
+      plainText = True,
+      value = module.params['windows_domain_password'])
+    identity.identification = pyVmomi.vim.CustomizationIdentification(
+      domainAdmin = module.params['windows_domain_account'],
+      joinDomain = module.params['windows_ad_domain'],
+      domainAdminPassword = domain_pass )
+    userdata = pyVmomi.vim.CustomizationUserData(
+      fullName = module.params['windows_fullname'],
+      orgName = module.params['windows_orgname'],
+      computerName = pyVmomi.vim.vm.customization.FixedName(
+        name = vm_name))
+    identity.userData = userdata
+  elif os_identity == 'linux':
+    identity = pyVmomi.vim.vm.customization.LinuxPrep(
+      domain = domain,
+      timeZone = module.params['linux_timezone'],
+      hwClockUTC = False,
+      hostName = pyVmomi.vim.vm.customization.FixedName(
+        name = vm_name))
 
+  return identity
+
+def create_adapter_mapping(module):
+  vm_nics = module.params['vm_nics']
+  domain = module.params['vm_domain']
+  content = module.params['content']
+  adapter_mapping = []
   for nic in vm_nics:
-    network = nic['network']
-    nic_type = nic['nic_type']
-    if nic.has_key('network_type'):
-      network_type = nic.network_type
-    else:
-      network_type = 'dvs' # defaulting to DVS as default
-    if nic.has_key('')
-    if nic_type == 'vmxnet':
-      nic_device = vim.vm.device.VirtualVmxnet
-    elif nic_type == 'e1000e':
-      nic_device = vim.vm.device.VirtualE1000e
-    elif nic_type == 'e1000':
-      nic_device = vim.vm.device.VirtualE1000
-    elif nic_type == 'vmxnet2':
-      nic_device = vim.vm.device.VirtualVmxnet2
-    else: # we assume vmxnet3 for better compatibility
-      nic_device = vim.vm.device.VirtualVmxnet3
-
-    nic_spec = vim.vm.device.VirtualDeviceSpec(
-      operation = vim.vm.device.VirtualDeviceSpec.Operation.add)
-
-    if network_type = 'standard':
-      nic_spec.device = nic_device(
-        backing = vim.vm.device.VirtualEthernetCard.NetworkBackingInfo(
-          network=get_obj(content, [vim.Network], network),
-          deviceName=network),
-        connectable = vim.vm.device.VirtualDevice.ConnectInfo(
-          startConnected=True,
-          connected=True,
-          allowGuestControl=True))
-    else:
-      dvs_pg = get_obj(content, [vim.dvs.DistributedVirtualPortgroup], network)
-      dvs_port = vim.dvs.PortConnection(
-        portgroupKey = dvs_pg.key,
-        switchUuid = dvs_pg.config..distributedVirtualSwitch.uuid)
-      nic_spec.device = nic_device(
-        backing = vim.vm.device.VirtualEthernetCard.DistributedVirtualPortBackingInfo(
-          port=dvs_port))
-
-    nic_specs.append(nic_spec)
-
     # Adapter mapping
     adapter = vim.vm.customization.IPSettings()
     # ipv4
@@ -186,7 +175,7 @@ def create_networking_specs(module):
       adapter.ip = vim.vm.customization.FixedIp()
       adapter.ip.ipAddress = nic['ip']
       adapter.subnetMask = nic['subnet_mask']
-      if nic.has_key['gateway']:
+      if nic.has_key('gateway'):
         adapter.gateway = nic['gateway']
     # ipv6
     if nic.has_key('ipv6'):
@@ -200,9 +189,58 @@ def create_networking_specs(module):
         if nic.has_key('ipv6_gateway'):
           adapter.ipV6Spec.gateway = nic['ipv6_gateway']
 
-    adapter_map = vim.vm.customization.AdapterMapping(adapter = adapter)
-    adapter_maps.append(adapter_map)
-  return nic_specs, adapter_maps
+    adapter_mapping.append(
+      vim.vm.customization.AdapterMapping(adapter=adapter))
+  return adapter_mapping
+  
+def create_networking_specs(module):
+  vm_nics = module.params['vm_nics']
+  content = module.params['content']
+  nic_specs = []
+
+  for nic in vm_nics:
+    network = nic['network']
+    if nic.has_key('network_type'):
+      network_type = nic.network_type
+    else:
+      network_type = 'standard' # defaulting to DVS as default
+    if nic.has_key('nic_type'):
+      nic_type = nic['nic_type']
+      if nic_type == 'vmxnet':
+        nic_device = vim.vm.device.VirtualVmxnet
+      elif nic_type == 'e1000e':
+        nic_device = vim.vm.device.VirtualE1000e
+      elif nic_type == 'e1000':
+        nic_device = vim.vm.device.VirtualE1000
+      elif nic_type == 'vmxnet2':
+        nic_device = vim.vm.device.VirtualVmxnet2
+      elif nic_type == 'vmxnet3':
+        nic_device = vim.vm.device.VirtualVmxnet3
+    else: # assume vmxnet3 for better compatibility
+      nic_device = vim.vm.device.VirtualVmxnet3
+
+    nic_spec = vim.vm.device.VirtualDeviceSpec(
+      operation = vim.vm.device.VirtualDeviceSpec.Operation.add)
+    if network_type == 'dvs':
+      dvs_pg = get_obj(content, [vim.dvs.DistributedVirtualPortgroup], network)
+      dvs_port = vim.dvs.PortConnection(
+        portgroupKey = dvs_pg.key,
+        switchUuid = dvs_pg.config.distributedVirtualSwitch.uuid)
+      nic_spec.device = nic_device(
+        backing = vim.vm.device.VirtualEthernetCard.DistributedVirtualPortBackingInfo(
+          port=dvs_port))
+    else: # a standard switch
+      nic_spec.device = nic_device(
+        backing = vim.vm.device.VirtualEthernetCard.NetworkBackingInfo(
+          network=get_obj(content, [vim.Network], network),
+          deviceName=network),
+        connectable = vim.vm.device.VirtualDevice.ConnectInfo(
+          startConnected=True,
+          connected=True,
+          allowGuestControl=True))
+    nic_specs.append(nic_spec)
+
+  return nic_specs
 
 def create_vm(module):
   content = module.params['content']
@@ -211,11 +249,7 @@ def create_vm(module):
   ds_path = "[%s] %s" % (module.params['vm_datastore'], vm_name)
   vm_pool = module.params['vm_pool']
 
-  nic_specs, adapter_maps = create_networking_specs(module)
-
-  globalip = vim.vm.customization.GlobalIPSettings(
-    dnsServerList = module.params['dns_server_list'],
-    dnsSuffixList = module.params['dns_suffix_list'] )
+  nic_specs = create_networking_specs(module)
 
   files = vim.vm.FileInfo(
     logDirectory=None,
@@ -229,13 +263,24 @@ def create_vm(module):
     numCPUs = module.params['vm_numCPUs'],
     files = files,
     guestId = module.params['vm_guest_id'],
-    deviceChange=[nic_spec])
+    deviceChange=nic_specs)
 
   task = vm_folder.CreateVM_Task(config=config, pool=vm_pool)
-  changed, result = wait_for_task(task)
+  wait_for_task(task) # not catching the result here
+
+  vm = get_obj(content, [vim.VirtualMachine], vm_name)
+  vm.MarkAsTemplate()
+
+  clonespec = vim.vm.CloneSpec()
+  adapter_mapping = create_adapter_mapping(module)
+
+  if module.params['dns_server_list']:
+    globalip = vim.vm.customization.GlobalIPSettings(
+      dnsServerList = module.params['dns_server_list'],
+      dnsSuffixList = module.params['dns_suffix_list'] )
+
 
   if module.params['vm_power']:
-    vm = get_obj(content, [vim.VirtualMachine], vm_name)
     task = vm.PowerOn()
     changed, result = wait_for_task(task)
 
@@ -255,42 +300,9 @@ def clone_vm(module):
   vm_name = module.params['vm_name']
   vm_spec = module.params['vm_spec']
 
-  nic_specs, adapter_maps = create_networking_specs(module)
+  nic_specs = create_networking_specs(module)
 
-  # thanks: @scaryghosts https://github.com/scaryghosts/vmdeploy/blob/master/clone_vm.py
-  os_identity = module.params['os_identity']
-  if os_identity == 'windows':
-    identity = pyVmomi.vim.CustomizationSysprep()
-    cust_pass = pyVmomi.vim.CustomizationPassword(
-      cust_pass.plainText = True,
-      cust_pass.value = module.params['admin_pass'])
-    identity.guiUnattended = pyVmomi.vim.CustomizationGuiUnattended(
-      autoLogon = True,
-      autoLogonCount = 1,
-      timeZone = module.params['windows_timezone'],
-      password = cust_pass)
-    domain_pass =  pyVmomi.vim.CustomizationPassword(
-      plainText = True,
-      value = module.params['windows_domain_password'])
-    identity.identification = pyVmomi.vim.CustomizationIdentification(
-      domainAdmin = module.params['windows_domain_account'],
-      joinDomain = module.params['windows_ad_domain'],
-      domainAdminPassword = domain_pass )
-    computerName =  pyVmomi.vim.vm.customization.FixedName(
-      name = vm_name)
-    userdata = pyVmomi.vim.CustomizationUserData(
-      fullName = module.params['windows_fullname'],
-      orgName = module.params['windows_orgname'],
-      computerName = computerName)
-    identity.userData = userdata
-
-  elif os_identity == 'linux':
-    hostName = pyVmomi.vim.vm.customization.FixedName(
-      name = vm_name)
-    identity = pyVmomi.vim.vm.customization.LinuxPrep(
-      domain = domain,
-      timeZone = module.params['linux_timezone'],
-      hwClockUTC = False)
+  identity = create_identity(module)
 
   # set our relospec
   relospec = vim.vm.RelocateSpec(
@@ -309,23 +321,44 @@ def clone_vm(module):
 def check_vm_update_state(module):
   content = module.params['content']
   vm = module.params['vm']
-  vm_nics = module_params['vm_nics']
   #vm_storage = modules_params['vm_storage']
-  memoryMB = module.params['vm_memoryMB'],
-  numCPUs = module.params['vm_numCPUs'],
 
-  # [TODO] vm_storage = module_params['vm_storage']
+  memoryMB = module.params['vm_memoryMB'],
+  numCPU = module.params['vm_numCPU'],
+  if numCPU or memoryMB:
+    if vm.config.hardware.numCPU != numCPU or vm.config.hardware.memoryMB != numCPU:  
+      return "changed"
+
+  #[TODO] 
+  # vm_storage = module.params['vm_storage']
+  # storage = []
+
+  vm_nics = module.params['vm_nics']
+  nics = []
   for device in vm.config.hardware.device:
-    if isinstance(device, vim.vm.device.VirtualEthernetCard):
+    dev = {}
+    if isinstance(device, vim.vm.device.VirtualE1000):
+      dev['nic_type'] = 'e1000'
+    elif isinstance(device, vim.vm.device.VirtualE1000e):
+      dev['nic_type'] = 'e1000e'
+    elif isinstance(device, vim.vm.device.VirtualVmxnet3):
+      dev['nic_type'] = 'vmxnet3'
+    elif isinstance(device, vim.vm.device.VirtualVmxnet):
+      dev['nic_type'] = 'vmxnet'
+    if dev.has_key('nic_type'):
       backing = device.backing
       if backing.has_key('port'):
         pgkey = backing.port.portgroupKey
         switch_uuid = backing.port.switchUuid
         dvs = content.dvSwitchManager.queryDvsByUuid(switch_uuid)
         pg = dvs.LookupDvPortGroup(pg_key)
-        network_name = pg.config.name
+        dev['network_name'] = pg.config.name
+        dev['network_type'] = 'dvs'
       else:
-        network_name = backing.network.name
+        dev['network_name'] = backing.network.name
+        dev['network_type'] = 'standard'
+      nics.append(dev)
+      continue
 
 def check_vm_state(module):
   content = connect_to_api(module)
@@ -409,9 +442,10 @@ def main():
     vm_memoryMB = dict(default=None, type='int'),
     vm_numCPUs = dict(default=None, type='int'),
     vm_guest_id = dict(default='otherLinuxGuest', type='str'),
-    vm_nics = dict(default=None, type='dict')
-    #vm_nic_type = dict(default='vmxnet3', choices=['vmxnet', 'vmxnet3', 'e1000', 'e1000e'], type='str'),
-    #vm_network = dict(default="VM Network", type='str')
+    vm_nics = dict(default=None, type='list'),
+    vm_storage = dict(default=None, type='dict'),
+    vm_domain = dict(default="vsphere.local", type='str'),
+    linux_timezone = dict(default="UTC", type="str") 
     ))
 
   module = AnsibleModule(argument_spec=argument_spec)
@@ -451,7 +485,8 @@ def main():
   try:
     vm_states[desired_state][current_state](module)
   except Exception as e:
-    module.fail_json(msg=str(e))
+    import traceback
+    module.fail_json(msg="%s:  %s" % (str(e), traceback.format_exc()) )
 
 from ansible.module_utils.vmware import *
 from ansible.module_utils.basic import *
